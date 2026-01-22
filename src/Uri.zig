@@ -58,7 +58,16 @@ pub const ParseError = error{};
 /// https://url.spec.whatwg.org/#url-parsing
 pub fn parse(input: []const u8) ParseError!Uri {
     _ = input;
-    return .{};
+    return .{
+        .scheme = "",
+        .username = null,
+        .password = null,
+        .host = null,
+        .port = null,
+        .path = .{ .list = &.{} },
+        .query = null,
+        .fragment = null,
+    };
 }
 
 pub fn format(
