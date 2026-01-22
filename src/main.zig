@@ -13,6 +13,6 @@ pub fn main() !void {
 
     const uri_str = args.next() orelse return error.UriRequired;
 
-    const uri: Uri = try .parse(uri_str);
+    const uri: Uri = try .parse(gpa, uri_str);
     std.debug.print("Uri: {f}\n", .{uri});
 }
