@@ -1,0 +1,30 @@
+Category	Error type	Error description	Error example	Failure
+IDNA	domain-to-ASCII	Unicode ToASCII records an error or returns the empty string. [UTS46]		Yes
+IDNA	domain-invalid-code-point	The input’s host contains a forbidden domain code point.	Hosts are percent-decoded before being processed when the URL is special, which would result in the following host portion becoming "exa#mple.org" and thus triggering this error. "https://exa%23mple.org"	Yes
+IDNA	domain-to-Unicode	Unicode ToUnicode records an error. [UTS46]		No
+Host parsing	host-invalid-code-point	An opaque host (in a URL that is not special) contains a forbidden host code point.	"foo://exa[mple.org"	Yes
+Host parsing	IPv4-empty-part	An IPv4 address ends with a U+002E (.).	"https://127.0.0.1./"	No
+Host parsing	IPv4-too-many-parts	An IPv4 address does not consist of exactly 4 parts.	"https://1.2.3.4.5/"	Yes
+Host parsing	IPv4-non-numeric-part	An IPv4 address part is not numeric.	"https://test.42"	Yes
+Host parsing	IPv4-non-decimal-part	The IPv4 address contains numbers expressed using hexadecimal or octal digits.	"https://127.0.0x0.1"	No
+Host parsing	IPv4-out-of-range-part	An IPv4 address part exceeds 255.	"https://255.255.4000.1"	Yes (only if applicable to the last part)
+Host parsing	IPv6-unclosed	An IPv6 address is missing the closing U+005D (]).	"https://[::1"	Yes
+Host parsing	IPv6-invalid-compression	An IPv6 address begins with improper compression.	"https://[:1]"	Yes
+Host parsing	IPv6-too-many-pieces	An IPv6 address contains more than 8 pieces.	"https://[1:2:3:4:5:6:7:8:9]"	Yes
+Host parsing	IPv6-multiple-compression	An IPv6 address is compressed in more than one spot.	"https://[1::1::1]"	Yes
+Host parsing	IPv6-invalid-code-point	An IPv6 address contains a code point that is neither an ASCII hex digit nor a U+003A (:). Or it unexpectedly ends.	"https://[1:2:3!:4]" "https://[1:2:3:]"	Yes
+Host parsing	IPv6-too-few-pieces	An uncompressed IPv6 address contains fewer than 8 pieces.	"https://[1:2:3]"	Yes
+Host parsing	IPv4-in-IPv6-too-many-pieces	An IPv6 address with IPv4 address syntax: the IPv6 address has more than 6 pieces.	"https://[1:1:1:1:1:1:1:127.0.0.1]"	Yes
+Host parsing	IPv4-in-IPv6-invalid-code-point	An IPv6 address with IPv4 address syntax: An IPv4 part is empty or contains a non-ASCII digit. An IPv4 part contains a leading 0. There are too many IPv4 parts.	"https://[ffff::.0.0.1]" "https://[ffff::127.0.xyz.1]" "https://[ffff::127.0xyz]" "https://[ffff::127.00.0.1]" "https://[ffff::127.0.0.1.2]"	Yes
+Host parsing	IPv4-in-IPv6-out-of-range-part	An IPv6 address with IPv4 address syntax: an IPv4 part exceeds 255.	"https://[ffff::127.0.0.4000]"	Yes
+Host parsing	IPv4-in-IPv6-too-few-parts	An IPv6 address with IPv4 address syntax: an IPv4 address contains too few parts.	"https://[ffff::127.0.0]"	Yes
+URL parsing	invalid-URL-unit	A code point is found that is not a URL unit.	"https://example.org/>" " https://example.org " "ht\ntps://example.org" "https://example.org/%s"	No
+URL parsing	special-scheme-missing-following-solidus	The input’s scheme is not followed by "//".	"file:c:/my-secret-folder" "https:example.org" `const url = new URL("https:foo.html", "https://example.org/");` 	No
+URL parsing	missing-scheme-non-relative-URL	The input is missing a scheme, because it does not begin with an ASCII alpha, and either no base URL was provided or the base URL cannot be used as a base URL because it has an opaque path.	Input’s scheme is missing and no base URL is given: `const url = new URL("💩");`. Input’s scheme is missing, but the base URL has an opaque path: `const url = new URL("💩", "mailto:user@example.org");`	Yes
+URL parsing	invalid-reverse-solidus	The URL has a special scheme and it uses U+005C (\) instead of U+002F (/).	"https://example.org\path\to\file"	No
+URL parsing	invalid-credentials	The input includes credentials.	"https://user@example.org" "ssh://user@example.org"	No
+URL parsing	host-missing	The input has a special scheme, but does not contain a host.	"https://#fragment" "https://:443" "https://user:pass@"	Yes
+URL parsing	port-out-of-range	The input’s port is too big.	"https://example.org:70000"	Yes
+URL parsing	port-invalid	The input’s port is invalid.	"https://example.org:7z"	Yes
+URL parsing	file-invalid-Windows-drive-letter	The input is a relative-URL string that starts with a Windows drive letter and the base URL’s scheme is "file".	`const url = new URL("/c:/path/to/file", "file:///c:/");`	No
+URL parsing	file-invalid-Windows-drive-letter-host	A file: URL’s host is a Windows drive letter.	"file://c:"	No
