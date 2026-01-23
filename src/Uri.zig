@@ -146,6 +146,51 @@ pub fn parseExtended(gpa: Allocator, input: []const u8, base: ?Uri, opt_encoding
     return uri;
 }
 
+const State = enum {
+    /// <https://url.spec.whatwg.org/#scheme-start-state>
+    scheme_start,
+    /// <https://url.spec.whatwg.org/#scheme-state>
+    scheme,
+    /// <https://url.spec.whatwg.org/#no-scheme-state>
+    no_scheme,
+    /// <https://url.spec.whatwg.org/#special-relative-or-authority-state>
+    special_relative_or_authority,
+    /// <https://url.spec.whatwg.org/#path-or-authority-state>
+    path_or_authority,
+    /// <https://url.spec.whatwg.org/#relative-state>
+    relative,
+    /// <https://url.spec.whatwg.org/#relative-slash-state>
+    relative_slash,
+    /// <https://url.spec.whatwg.org/#special-authority-slashes-state>
+    special_authority_slashes,
+    /// <https://url.spec.whatwg.org/#special-authority-ignore-slashes-state>
+    special_authority_ignore_slashes,
+    /// <https://url.spec.whatwg.org/#authority-state>
+    authority,
+    /// <https://url.spec.whatwg.org/#host-state>
+    host,
+    /// <https://url.spec.whatwg.org/#hostname-state>
+    hostname,
+    /// <https://url.spec.whatwg.org/#port-state>
+    port,
+    /// <https://url.spec.whatwg.org/#file-state>
+    file,
+    /// <https://url.spec.whatwg.org/#file-slash-state>
+    file_slash,
+    /// <https://url.spec.whatwg.org/#file-host-state>
+    file_host,
+    /// <https://url.spec.whatwg.org/#path-start-state>
+    path_start,
+    /// <https://url.spec.whatwg.org/#path-state>
+    path,
+    /// <https://url.spec.whatwg.org/#cannot-be-a-base-url-path-state>
+    opaque_path,
+    /// <https://url.spec.whatwg.org/#query-state>
+    query,
+    /// <https://url.spec.whatwg.org/#fragment-state>
+    fragment,
+};
+
 /// <https://url.spec.whatwg.org/#concept-basic-url-parser>
 fn parseImpl(
     gpa: Allocator,
@@ -165,50 +210,6 @@ fn parseImpl(
     // - "Remove all ASCII tab or newline from input."
     // Each tab or newline will need to be removed individually, rather than removing them all at once at the start
 
-    const State = enum {
-        /// <https://url.spec.whatwg.org/#scheme-start-state>
-        scheme_start,
-        /// <https://url.spec.whatwg.org/#scheme-state>
-        scheme,
-        /// <https://url.spec.whatwg.org/#no-scheme-state>
-        no_scheme,
-        /// <https://url.spec.whatwg.org/#special-relative-or-authority-state>
-        special_relative_or_authority,
-        /// <https://url.spec.whatwg.org/#path-or-authority-state>
-        path_or_authority,
-        /// <https://url.spec.whatwg.org/#relative-state>
-        relative,
-        /// <https://url.spec.whatwg.org/#relative-slash-state>
-        relative_slash,
-        /// <https://url.spec.whatwg.org/#special-authority-slashes-state>
-        special_authority_slashes,
-        /// <https://url.spec.whatwg.org/#special-authority-ignore-slashes-state>
-        special_authority_ignore_slashes,
-        /// <https://url.spec.whatwg.org/#authority-state>
-        authority,
-        /// <https://url.spec.whatwg.org/#host-state>
-        host,
-        /// <https://url.spec.whatwg.org/#hostname-state>
-        hostname,
-        /// <https://url.spec.whatwg.org/#port-state>
-        port,
-        /// <https://url.spec.whatwg.org/#file-state>
-        file,
-        /// <https://url.spec.whatwg.org/#file-slash-state>
-        file_slash,
-        /// <https://url.spec.whatwg.org/#file-host-state>
-        file_host,
-        /// <https://url.spec.whatwg.org/#path-start-state>
-        path_start,
-        /// <https://url.spec.whatwg.org/#path-state>
-        path,
-        /// <https://url.spec.whatwg.org/#cannot-be-a-base-url-path-state>
-        opaque_path,
-        /// <https://url.spec.whatwg.org/#query-state>
-        query,
-        /// <https://url.spec.whatwg.org/#fragment-state>
-        fragment,
-    };
     var state: State = .scheme_start;
     _ = &state;
     const encoding = opt_encoding orelse .utf8;
@@ -228,6 +229,12 @@ fn parseImpl(
 
     // "Keep running the following state machine by switching on state. If after a run pointer points to the EOF code point, go to the next step. Otherwise, increase pointer by 1 and continue with the state machine."
     while (true) : (pointer.inc()) {
+        if (pointer.codepoint() == '\t' or pointer.codepoint() == '\n') {
+            try validationError(.invalid_url_unit, validation_error_behavior);
+            pointer.inc();
+            continue;
+        }
+
         switch (state) {
             .scheme_start => {
                 const c = pointer.codepoint() orelse 0;
@@ -334,13 +341,26 @@ fn parseImpl(
                     } else uri.query = null;
                     uri.fragment = "";
                     state = .fragment;
-                } else if (!std.mem.eql(base.?.scheme, "file")) {
-                    // "Otherwise, if base’s scheme is not "file", set state to relative state and decrease pointer by 1"
+                } else if (!std.mem.eql(u8, base.?.scheme, "file")) {
+                    // "Otherwise, if base’s scheme is not "file", set state to 'relative state' and decrease pointer by 1"
                     state = .relative;
                     pointer.dec();
                 } else {
                     // "Otherwise, set state to file state and decrease pointer by 1"
                     state = .file;
+                    pointer.dec();
+                }
+            },
+            .special_relative_or_authority => {
+                const c = pointer.codepoint() orelse 0;
+                if (c == '/' and std.mem.startsWith(u8, pointer.remaining(), "/")) {
+                    // "If c is U+002F (/) and remaining starts with U+002F (/), then set state to 'special authority ignore slashes' state and increase pointer by 1"
+                    state = .special_authority_ignore_slashes;
+                    pointer.inc();
+                } else {
+                    // "Otherwise, special-scheme-missing-following-solidus validation error, set state to 'relative' state and decrease pointer by 1"
+                    try validationError(.special_scheme_missing_following_solidus, validation_error_behavior);
+                    state = .relative;
                     pointer.dec();
                 }
             },
@@ -604,3 +624,18 @@ pub fn format(
     _ = self;
     try writer.writeAll("<unknown>");
 }
+
+/// Various tracing functions
+const trace = struct {
+    pub const enable = true;
+
+    pub fn step(src: std.builtin.SourceLocation, description: []const u8) void {
+        if (!comptime enable) return;
+        std.debug.print("trace(step): {d}: {s}\n", .{ src.line, description });
+    }
+
+    pub fn state(src: std.builtin.SourceLocation, machine_state: State) void {
+        if (!comptime enable) return;
+        std.debug.print("trace(state): {d}: {t}\n", .{ src.line, machine_state });
+    }
+};
