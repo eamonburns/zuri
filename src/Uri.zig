@@ -227,9 +227,10 @@ fn parseImpl(
 
     const validation_error_behavior: ValidationError.Behavior = .continue_parsing;
 
-    // "Keep running the following state machine by switching on state. If after a run pointer points to the EOF code point, go to the next step. Otherwise, increase pointer by 1 and continue with the state machine."
+    trace.step(@src(), "Keep running the following state machine by switching on state. If after a run pointer points to the EOF code point, go to the next step. Otherwise, increase pointer by 1 and continue with the state machine", .{});
     while (true) : (pointer.inc()) {
         if (pointer.codepoint() == '\t' or pointer.codepoint() == '\n') {
+            trace.step(@src(), "If `input` contains any ASCII tab or newline, invalid-URL-unit validation error", .{ .c = pointer.codepoint() });
             try validationError(.invalid_url_unit, validation_error_behavior);
             pointer.inc();
             continue;
@@ -237,103 +238,105 @@ fn parseImpl(
 
         switch (state) {
             .scheme_start => {
+                trace.state(@src(), .scheme_start);
                 const c = pointer.codepoint() orelse 0;
 
                 if (std.ascii.isAlphabetic(c)) {
-                    // "If c is an ASCII alpha, append c, lowercased, to buffer, and set state to 'scheme' state."
+                    trace.step(@src(), "If c is an ASCII alpha, append c, lowercased, to buffer, and set state to 'scheme' state", .{ .c = c });
                     try buffer.append(gpa, std.ascii.toLower(c));
                     state = .scheme;
                 } else {
-                    // "Otherwise, if state override is not given, set state to 'no scheme' state and decrease pointer by 1." (NOTE: there is no "state override", so this always succeeds)
+                    trace.step(@src(), "Otherwise, if state override is not given, set state to 'no scheme' state and decrease pointer by 1", .{}); // NOTE: there is no "state override", so this always succeeds
                     state = .no_scheme;
                     pointer.dec();
                 }
             },
             .scheme => {
+                trace.state(@src(), .scheme);
                 const c = pointer.codepoint() orelse 0;
                 if (std.ascii.isAlphanumeric(c) or c == '+' or c == '-' or c == '.') {
-                    // "If c is an ASCII alphanumeric, U+002B (+), U+002D (-), or U+002E (.), append c, lowercased, to buffer."
+                    trace.step(@src(), "If c is an ASCII alphanumeric, U+002B (+), U+002D (-), or U+002E (.), append c, lowercased, to buffer", .{ .c = c });
                     try buffer.append(gpa, std.ascii.toLower(c));
                 } else if (c == ':') {
-                    // "Otherwise, if c is U+003A (:)"
+                    trace.step(@src(), "Otherwise, if c is U+003A (:)", .{ .c = c });
 
                     if (false) {
-                        // "If state override is given" (NOTE: there is no "state override", so this always fails)
+                        trace.step(@src(), "If state override is given", .{}); // NOTE: there is no "state override", so this always fails
 
                         if (isSpecialScheme(uri.scheme) != isSpecialScheme(buffer.items)) {
-                            // "If url’s scheme is a special scheme and buffer is not a special scheme, then return."
-                            // "If url’s scheme is not a special scheme and buffer is a special scheme, then return."
+                            trace.step(@src(), "If url’s scheme is a special scheme and buffer is not a special scheme, then return", .{ .@"uri.scheme" = uri.scheme, .buffer = buffer.items });
+                            trace.step(@src(), "If url’s scheme is not a special scheme and buffer is a special scheme, then return", .{ .@"uri.scheme" = uri.scheme, .buffer = buffer.items });
 
                             return uri;
                         } else if ((uri.username != null or uri.password != null or uri.port != null) and std.mem.eql(u8, buffer.items, "file")) {
-                            // "If url includes credentials or has a non-null port, and buffer is "file", then return."
+                            trace.step(@src(), "If url includes credentials or has a non-null port, and buffer is 'file', then return", .{ .@"uri.username" = uri.username, .@"uri.password" = uri.password, .buffer = buffer.items });
 
                             return uri;
                         } else if (std.mem.eql(u8, uri.scheme, "file") and uri.host == .empty) {
-                            // "If url’s scheme is "file" and its host is an empty host, then return."
+                            trace.step(@src(), "If url’s scheme is 'file' and its host is an empty host, then return", .{ .@"uri.scheme" = uri.scheme, .@"uri.host" = uri.host });
 
                             return uri;
                         }
                     }
-                    // "Set url’s scheme to buffer."
+                    trace.step(@src(), "Set url’s scheme to buffer", .{});
                     uri.scheme = try buffer.toOwnedSlice(gpa);
                     if (false) {
-                        // "If state override is given" (NOTE: there is no "state override", so this always fails)
+                        trace.step(@src(), "If state override is given", .{}); // NOTE: there is no "state override", so this always fails
 
                         if (uri.port == schemeDefaultPort(uri.scheme)) {
-                            // "If url’s port is url’s scheme’s default port, then set url’s port to null."
+                            trace.step(@src(), "If url’s port is url’s scheme’s default port, then set url’s port to null", .{ .@"uri.port" = uri.port });
 
                             uri.port = null;
                         }
                         return uri;
                     }
-                    // "Set buffer to the empty string."
+                    trace.step(@src(), "Set buffer to the empty string", .{});
                     buffer.clearRetainingCapacity();
                     if (std.mem.eql(u8, uri.scheme, "file")) {
                         if (!std.mem.startsWith(u8, pointer.remaining(), "//")) {
-                            // "If remaining does not start with "//", special-scheme-missing-following-solidus validation error."
+                            trace.step(@src(), "If remaining does not start with '//', special-scheme-missing-following-solidus validation error", .{ .remaining = pointer.remaining() });
                             try validationError(.special_scheme_missing_following_solidus, validation_error_behavior);
                         }
                         state = .file;
                     } else if (isSpecialScheme(uri.scheme) and base != null and std.mem.eql(u8, base.?.scheme, uri.scheme)) {
-                        // "Otherwise, if url is special, base is non-null, and base’s scheme is url’s scheme"
+                        trace.step(@src(), "Otherwise, if url is special, base is non-null, and base’s scheme is url’s scheme", .{ .@"uri.scheme" = uri.scheme, .base = base });
 
-                        // "Assert: base is special (and therefore does not have an opaque path)"
+                        trace.step(@src(), "Assert: base is special (and therefore does not have an opaque path)", .{});
                         assert(isSpecialScheme(base.?.scheme) and base.?.path != .opaque_path);
 
-                        // "Set state to 'special relative or authority' state."
+                        trace.step(@src(), "Set state to 'special relative or authority' state", .{});
                         state = .special_relative_or_authority;
                     } else if (isSpecialScheme(uri.scheme)) {
-                        // "Otherwise, if url is special, set state to 'special authority slashes' state"
+                        trace.step(@src(), "Otherwise, if url is special, set state to 'special authority slashes' state", .{ .@"uri.scheme" = uri.scheme });
                         state = .special_authority_slashes;
                     } else if (std.mem.startsWith(u8, pointer.remaining(), "/")) {
-                        // "Otherwise, if remaining starts with an U+002F (/), set state to 'path or authority' state and increase pointer by 1"
+                        trace.step(@src(), "Otherwise, if remaining starts with an U+002F (/), set state to 'path or authority' state and increase pointer by 1", .{ .remaining = pointer.remaining() });
                         state = .path_or_authority;
                         pointer.inc();
                     } else {
-                        // "Otherwise, set url’s path to the empty string and set state to 'opaque path' state"
+                        trace.step(@src(), "Otherwise, set url’s path to the empty string and set state to 'opaque path' state", .{});
                         uri.path = .{ .opaque_path = "" };
                         state = .opaque_path;
                     }
                 } else if (true) {
-                    // "Otherwise, if state override is not given, set buffer to the empty string, state to 'no scheme' state, and start over (from the first code point in input)." (NOTE: there is no "state override", so this always succeeds)
+                    trace.step(@src(), "Otherwise, if state override is not given, set buffer to the empty string, state to 'no scheme' state, and start over (from the first code point in input)", .{}); // NOTE: there is no "state override", so this always succeeds
                     buffer.clearRetainingCapacity();
                     state = .no_scheme;
-                    // FIXME: I don't think this quite works. It should either be set to -1, and then it is set to 0 by the while loop continue expression, or we should skip the continue expression somehow
                     pointer.index = Pointer.negative_one;
                 } else {
-                    // "Otherwise, return failure"
+                    trace.step(@src(), "Otherwise, return failure", .{});
                     return error.ParseFailure;
                 }
             },
             .no_scheme => {
+                trace.state(@src(), .no_scheme);
                 const c = pointer.codepoint() orelse 0;
                 if (base == null or (base.?.path == .opaque_path and c != '#')) {
-                    // "If base is null, or base has an opaque path and c is not U+0023 (#), missing-scheme-non-relative-URL validation error, return failure"
+                    trace.step(@src(), "If base is null, or base has an opaque path and c is not U+0023 (#), missing-scheme-non-relative-URL validation error, return failure", .{ .base = base, .c = c });
                     try validationError(.missing_scheme_non_relative_url, validation_error_behavior);
                     return error.ParseFailure;
                 } else if (base.?.path == .opaque_path and c == '#') {
-                    // "Otherwise, if base has an opaque path and c is U+0023 (#), set url’s scheme to base’s scheme, url’s path to base’s path, url’s query to base’s query, url’s fragment to the empty string, and set state to fragment state."
+                    trace.step(@src(), "Otherwise, if base has an opaque path and c is U+0023 (#), set url’s scheme to base’s scheme, url’s path to base’s path, url’s query to base’s query, url’s fragment to the empty string, and set state to 'fragment' state", .{ .base = base, .c = c });
                     uri.scheme = try gpa.dupe(u8, base.?.scheme);
                     uri.path = try base.?.path.dupe(gpa);
                     if (base.?.query) |q| {
@@ -342,23 +345,24 @@ fn parseImpl(
                     uri.fragment = "";
                     state = .fragment;
                 } else if (!std.mem.eql(u8, base.?.scheme, "file")) {
-                    // "Otherwise, if base’s scheme is not "file", set state to 'relative state' and decrease pointer by 1"
+                    trace.step(@src(), "Otherwise, if base’s scheme is not 'file', set state to 'relative state' and decrease pointer by 1", .{ .@"base.scheme" = base.?.scheme });
                     state = .relative;
                     pointer.dec();
                 } else {
-                    // "Otherwise, set state to file state and decrease pointer by 1"
+                    trace.step(@src(), "Otherwise, set state to 'file' state and decrease pointer by 1", .{});
                     state = .file;
                     pointer.dec();
                 }
             },
             .special_relative_or_authority => {
+                trace.state(@src(), .special_relative_or_authority);
                 const c = pointer.codepoint() orelse 0;
                 if (c == '/' and std.mem.startsWith(u8, pointer.remaining(), "/")) {
-                    // "If c is U+002F (/) and remaining starts with U+002F (/), then set state to 'special authority ignore slashes' state and increase pointer by 1"
+                    trace.step(@src(), "If c is U+002F (/) and remaining starts with U+002F (/), then set state to 'special authority ignore slashes' state and increase pointer by 1", .{ .c = c, .remaining = pointer.remaining() });
                     state = .special_authority_ignore_slashes;
                     pointer.inc();
                 } else {
-                    // "Otherwise, special-scheme-missing-following-solidus validation error, set state to 'relative' state and decrease pointer by 1"
+                    trace.step(@src(), "Otherwise, special-scheme-missing-following-solidus validation error, set state to 'relative' state and decrease pointer by 1", .{});
                     try validationError(.special_scheme_missing_following_solidus, validation_error_behavior);
                     state = .relative;
                     pointer.dec();
@@ -379,7 +383,9 @@ pub const ValidationError = enum {
     /// Failure: Yes
     domain_to_ascii,
     /// The input’s host contains a forbidden domain code point.
-    /// Example: Hosts are percent-decoded before being processed when the URL is special, which would result in the following host portion becoming "exa#mple.org" and thus triggering this error. "https://exa%23mple.org"
+    /// Example:
+    ///   Hosts are percent-decoded before being processed when the URL is special, which would result in the following host portion becoming "exa#mple.org" and thus triggering this error.
+    ///   "https://exa%23mple.org"
     /// Failure: Yes
     domain_invalid_code_point,
     /// Unicode ToUnicode records an error. [UTS46]
@@ -427,7 +433,9 @@ pub const ValidationError = enum {
     /// Failure: Yes
     ipv6_multiple_compression,
     /// An IPv6 address contains a code point that is neither an ASCII hex digit nor a U+003A (:). Or it unexpectedly ends.
-    /// Example: "https://[1:2:3!:4]" "https://[1:2:3:]"
+    /// Example:
+    ///   "https://[1:2:3!:4]"
+    ///   "https://[1:2:3:]"
     /// Failure: Yes
     ipv6_invalid_code_point,
     /// An uncompressed IPv6 address contains fewer than 8 pieces.
@@ -439,7 +447,12 @@ pub const ValidationError = enum {
     /// Failure: Yes
     ipv4_in_ipv6_too_many_pieces,
     /// An IPv6 address with IPv4 address syntax: An IPv4 part is empty or contains a non-ASCII digit. An IPv4 part contains a leading 0. There are too many IPv4 parts.
-    /// Example: "https://[ffff::.0.0.1]" "https://[ffff::127.0.xyz.1]" "https://[ffff::127.0xyz]" "https://[ffff::127.00.0.1]" "https://[ffff::127.0.0.1.2]"
+    /// Example:
+    ///   "https://[ffff::.0.0.1]"
+    ///   "https://[ffff::127.0.xyz.1]"
+    ///   "https://[ffff::127.0xyz]"
+    ///   "https://[ffff::127.00.0.1]"
+    ///   "https://[ffff::127.0.0.1.2]"
     /// Failure: Yes
     ipv4_in_ipv6_invalid_code_point,
     /// An IPv6 address with IPv4 address syntax: an IPv4 part exceeds 255.
@@ -451,15 +464,26 @@ pub const ValidationError = enum {
     /// Failure: Yes
     ipv4_in_ipv6_too_few_parts,
     /// A code point is found that is not a URL unit.
-    /// Example: "https://example.org/>" " https://example.org " "ht\ntps://example.org" "https://example.org/%s"
+    /// Example:
+    ///   "https://example.org/>"
+    ///   " https://example.org "
+    ///   "ht\ntps://example.org"
+    ///   "https://example.org/%s"
     /// Failure: No
     invalid_url_unit,
     /// The input’s scheme is not followed by "//".
-    /// Example: "file:c:/my-secret-folder" "https:example.org" `const url = new URL("https:foo.html", "https://example.org/");`
+    /// Example:
+    ///   "file:c:/my-secret-folder"
+    ///   "https:example.org"
+    ///   `const url = new URL("https:foo.html", "https://example.org/");`
     /// Failure: No
     special_scheme_missing_following_solidus,
     /// The input is missing a scheme, because it does not begin with an ASCII alpha, and either no base URL was provided or the base URL cannot be used as a base URL because it has an opaque path.
-    /// Example: Input’s scheme is missing and no base URL is given: `const url = new URL("💩");`. Input’s scheme is missing, but the base URL has an opaque path: `const url = new URL("💩", "mailto:user@example.org");`
+    /// Example:
+    ///   Input’s scheme is missing and no base URL is given:
+    ///   `const url = new URL("💩");`
+    ///   Input’s scheme is missing, but the base URL has an opaque path:
+    ///   `const url = new URL("💩", "mailto:user@example.org");`
     /// Failure: Yes
     missing_scheme_non_relative_url,
     /// The URL has a special scheme and it uses U+005C (\) instead of U+002F (/).
@@ -467,11 +491,16 @@ pub const ValidationError = enum {
     /// Failure: No
     invalid_reverse_solidus,
     /// The input includes credentials.
-    /// Example: "https://user@example.org" "ssh://user@example.org"
+    /// Example:
+    ///   "https://user@example.org"
+    ///   "ssh://user@example.org"
     /// Failure: No
     invalid_credentials,
     /// The input has a special scheme, but does not contain a host.
-    /// Example: "https://#fragment" "https://:443" "https://user:pass@"
+    /// Example:
+    ///   "https://#fragment"
+    ///   "https://:443"
+    ///   "https://user:pass@"
     /// Failure: Yes
     host_missing,
     /// The input’s port is too big.
@@ -627,15 +656,21 @@ pub fn format(
 
 /// Various tracing functions
 const trace = struct {
-    pub const enable = true;
+    pub const enable: bool = if (@hasDecl(@import("root"), "uri_trace")) @import("root").uri_trace else false;
 
-    pub fn step(src: std.builtin.SourceLocation, description: []const u8) void {
+    pub fn step(src: std.builtin.SourceLocation, description: []const u8, vars: anytype) void {
         if (!comptime enable) return;
-        std.debug.print("trace(step): {d}: {s}\n", .{ src.line, description });
+
+        if (@typeInfo(@TypeOf(vars)).@"struct".fields.len > 0) {
+            std.debug.print("uri_trace(step): {d}: {s} {any}\n", .{ src.line, description, vars });
+        } else {
+            std.debug.print("uri_trace(step): {d}: {s}\n", .{ src.line, description });
+        }
     }
 
     pub fn state(src: std.builtin.SourceLocation, machine_state: State) void {
         if (!comptime enable) return;
-        std.debug.print("trace(state): {d}: {t}\n", .{ src.line, machine_state });
+
+        std.debug.print("uri_trace(state): {d}: {t}\n", .{ src.line, machine_state });
     }
 };

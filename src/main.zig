@@ -2,6 +2,8 @@ const std = @import("std");
 const zuri = @import("zuri");
 const Uri = zuri.Uri;
 
+pub const uri_trace = true;
+
 pub fn main() !void {
     var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
     defer std.debug.assert(debug_allocator.deinit() == .ok);
