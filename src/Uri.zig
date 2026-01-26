@@ -79,6 +79,15 @@ pub const Host = union(enum) {
         segment7: u16,
     };
 
+    pub fn dupe(host: Host, gpa: Allocator) Allocator.Error!Host {
+        switch (host) {
+            .domain => |d| return .{ .domain = try gpa.dupe(u8, d) },
+            .opaque_host => |oh| return .{ .opaque_host = try gpa.dupe(u8, oh) },
+            .ip_address => |ip| return .{ .ip_address = ip },
+            .empty => return .empty,
+        }
+    }
+
     pub fn deinit(host: Host, gpa: Allocator) void {
         switch (host) {
             .domain => |d| gpa.free(d),
@@ -205,6 +214,10 @@ fn parseImpl(
     var uri: Uri = .init;
     errdefer uri.deinit(gpa);
 
+    // "The EOF code point is a conceptual code point that signifies the end of a string or code point stream"
+    // <https://url.spec.whatwg.org/#eof-code-point>
+    const EOF_CODEPOINT = 0;
+
     // NOTE:
     // - "If `input` contains any ASCII tab or newline, invalid-URL-unit validation error"
     // - "Remove all ASCII tab or newline from input."
@@ -239,7 +252,7 @@ fn parseImpl(
         switch (state) {
             .scheme_start => {
                 trace.state(@src(), .scheme_start);
-                const c = pointer.codepoint() orelse 0;
+                const c = pointer.codepoint() orelse EOF_CODEPOINT;
 
                 if (std.ascii.isAlphabetic(c)) {
                     trace.step(@src(), "If c is an ASCII alpha, append c, lowercased, to buffer, and set state to 'scheme' state", .{ .c = c });
@@ -253,7 +266,7 @@ fn parseImpl(
             },
             .scheme => {
                 trace.state(@src(), .scheme);
-                const c = pointer.codepoint() orelse 0;
+                const c = pointer.codepoint() orelse EOF_CODEPOINT;
                 if (std.ascii.isAlphanumeric(c) or c == '+' or c == '-' or c == '.') {
                     trace.step(@src(), "If c is an ASCII alphanumeric, U+002B (+), U+002D (-), or U+002E (.), append c, lowercased, to buffer", .{ .c = c });
                     try buffer.append(gpa, std.ascii.toLower(c));
@@ -330,7 +343,7 @@ fn parseImpl(
             },
             .no_scheme => {
                 trace.state(@src(), .no_scheme);
-                const c = pointer.codepoint() orelse 0;
+                const c = pointer.codepoint() orelse EOF_CODEPOINT;
                 if (base == null or (base.?.path == .opaque_path and c != '#')) {
                     trace.step(@src(), "If base is null, or base has an opaque path and c is not U+0023 (#), missing-scheme-non-relative-URL validation error, return failure", .{ .base = base, .c = c });
                     try validationError(.missing_scheme_non_relative_url, validation_error_behavior);
@@ -356,7 +369,7 @@ fn parseImpl(
             },
             .special_relative_or_authority => {
                 trace.state(@src(), .special_relative_or_authority);
-                const c = pointer.codepoint() orelse 0;
+                const c = pointer.codepoint() orelse EOF_CODEPOINT;
                 if (c == '/' and std.mem.startsWith(u8, pointer.remaining(), "/")) {
                     trace.step(@src(), "If c is U+002F (/) and remaining starts with U+002F (/), then set state to 'special authority ignore slashes' state and increase pointer by 1", .{ .c = c, .remaining = pointer.remaining() });
                     state = .special_authority_ignore_slashes;
@@ -366,6 +379,91 @@ fn parseImpl(
                     try validationError(.special_scheme_missing_following_solidus, validation_error_behavior);
                     state = .relative;
                     pointer.dec();
+                }
+            },
+            .path_or_authority => {
+                trace.state(@src(), .path_or_authority);
+                const c = pointer.codepoint() orelse EOF_CODEPOINT;
+                if (c == '/') {
+                    trace.step(@src(), "If c is U+002F (/), then set state to authority state", .{ .c = c });
+                    state = .authority;
+                } else {
+                    trace.step(@src(), "Otherwise, set state to path state, and decrease pointer by 1", .{});
+                    state = .path;
+                    pointer.dec();
+                }
+            },
+            .relative => {
+                trace.state(@src(), .relative);
+                const b = base orelse unreachable; // `base` must not be null
+                trace.step(@src(), "Assert: base’s scheme is not 'file'", .{ .base = base });
+                assert(!std.mem.eql(u8, b.scheme, "file"));
+                trace.step(@src(), "Set url’s scheme to base’s scheme", .{ .@"base.scheme" = b.scheme });
+                uri.scheme = try gpa.dupe(u8, b.scheme);
+                const c = pointer.codepoint() orelse EOF_CODEPOINT;
+                if (c == '/') {
+                    trace.step(@src(), "If c is U+002F (/), then set state to 'relative slash state'", .{ .c = c });
+                    state = .relative_slash;
+                } else if (isSpecialScheme(uri.scheme) and c == '\\') {
+                    trace.step(@src(), "Otherwise, if url is special and c is U+005C (\\), invalid-reverse-solidus validation error, set state to relative slash state", .{ .@"uri.scheme" = uri.scheme, .c = c });
+                    try validationError(.invalid_reverse_solidus, validation_error_behavior);
+                    state = .relative_slash;
+                } else {
+                    trace.step(@src(), "Set url’s username to base’s username, url’s password to base’s password, url’s host to base’s host, url’s port to base’s port, url’s path to a clone of base’s path, and url’s query to base’s query", .{});
+                    if (b.username) |u| uri.username = try gpa.dupe(u8, u);
+                    if (b.password) |p| uri.password = try gpa.dupe(u8, p);
+                    if (b.host) |h| uri.host = try h.dupe(gpa);
+                    uri.port = b.port;
+                    uri.path = try b.path.dupe(gpa);
+                    if (b.query) |q| uri.query = try gpa.dupe(u8, q);
+
+                    if (c == '?') {
+                        trace.step(@src(), "If c is U+003F (?), then set url’s query to the empty string, and state to query state", .{ .c = c });
+                        uri.query = "";
+                        state = .query;
+                    } else if (c == '#') {
+                        trace.step(@src(), "Otherwise, if c is U+0023 (#), set url’s fragment to the empty string and state to fragment state", .{ .c = c });
+                        uri.fragment = "";
+                        state = .fragment;
+                    } else if (c != EOF_CODEPOINT) {
+                        trace.step(@src(), "Otherwise, if c is not the EOF code point", .{ .c = c });
+                        trace.step(@src(), "Set url’s query to null", .{});
+                        if (uri.query) |q| gpa.free(q);
+                        uri.query = null;
+                        trace.step(@src(), "Shorten url’s path", .{});
+                        { // <https://url.spec.whatwg.org/#shorten-a-urls-path>
+                            trace.step(@src(), "Assert: url does not have an opaque path", .{ .@"uri.path" = uri.path });
+                            trace.step(@src(), "Let path be url’s path", .{});
+                            var path = switch (uri.path) {
+                                .opaque_path => unreachable,
+                                .list => |l| l,
+                            };
+
+                            if (std.mem.eql(u8, uri.scheme, "file") and path.len == 1 and if (WindowsDriveLetter.fromString(path[0])) |d| d == .normalized else false) {
+                                trace.step(@src(), "If url’s scheme is 'file', path’s size is 1, and path[0] is a normalized Windows drive letter, then return", .{
+                                    .@"uri.scheme" = uri.scheme,
+                                    .@"path.len" = path.len,
+                                    .@"path[0]" = if (path.len > 0) path[0] else null,
+                                });
+                                return uri;
+                            }
+                            trace.step(@src(), "Remove path’s last item, if any.", .{});
+                            if (path.len > 0) {
+                                // Free last path segment
+                                gpa.free(path[path.len - 1]);
+                                // Resize path
+                                const new_len = path.len - 1;
+                                if (!gpa.resize(path, new_len)) {
+                                    const new_path = try gpa.dupe(Path.Segment, path[0..new_len]);
+                                    gpa.free(path);
+                                    path = new_path;
+                                }
+                            }
+                        }
+                        trace.step(@src(), "Set state to 'path' state and decrease pointer by 1", .{});
+                        state = .path;
+                        pointer.dec();
+                    }
                 }
             },
             inline else => |s| @panic("TODO: '" ++ @tagName(s) ++ "' state"),
@@ -616,6 +714,24 @@ const Pointer = struct {
 
     pub fn dec(pointer: *Pointer) void {
         pointer.index -%= 1;
+    }
+};
+
+///A Windows drive letter is two code points, of which the first is an ASCII alpha and the second is either U+003A (:) or U+007C (|).
+///A normalized Windows drive letter is a Windows drive letter of which the second code point is U+003A (:).
+/// <https://url.spec.whatwg.org/#windows-drive-letter>
+const WindowsDriveLetter = union(enum) {
+    unnormalized: u8,
+    normalized: u8,
+
+    pub fn fromString(input: []const u8) ?WindowsDriveLetter {
+        if (input.len != 2 or !std.ascii.isAlphabetic(input[0])) return null;
+
+        return switch (input[1]) {
+            ':' => .{ .normalized = input[0] },
+            '|' => .{ .unnormalized = input[0] },
+            else => null,
+        };
     }
 };
 
