@@ -58,6 +58,7 @@ const Command = struct {
 fn exitHelp(status: u8) noreturn {
     std.debug.print(
         \\usage: zuri <uri> [base]
+        \\
     , .{});
 
     std.process.exit(status);
