@@ -466,6 +466,45 @@ fn parseImpl(
                     }
                 }
             },
+            .relative_slash => {
+                trace.state(@src(), .relative_slash);
+                const c = pointer.codepoint() orelse EOF_CODEPOINT;
+                if (isSpecialScheme(uri.scheme) and (c == '/' or c == '\\')) {
+                    trace.step(@src(), "If url is special and c is U+002F (/) or U+005C (\\), then", .{ .@"uri.scheme" = uri.scheme, .c = c });
+                    if (c == '\\') {
+                        trace.step(@src(), "If c is U+005C (\\), invalid-reverse-solidus validation error", .{ .c = c });
+                        try validationError(.invalid_reverse_solidus, validation_error_behavior);
+                    }
+                    trace.step(@src(), "Set state to special 'authority ignore slashes' state", .{});
+                    state = .special_authority_ignore_slashes;
+                }
+            },
+            .special_authority_slashes => {
+                trace.state(@src(), .special_authority_ignore_slashes);
+                const c = pointer.codepoint() orelse EOF_CODEPOINT;
+                if (c == '/' and std.mem.startsWith(u8, pointer.remaining(), "/")) {
+                    trace.step(@src(), "If c is U+002F (/) and remaining starts with U+002F (/), then set state to 'special authority ignore slashes' state and increase pointer by 1", .{ .c = c, .remaining = pointer.remaining() });
+                    state = .special_authority_ignore_slashes;
+                    pointer.inc();
+                } else {
+                    trace.step(@src(), "Otherwise, special-scheme-missing-following-solidus validation error, set state to special authority ignore slashes state and decrease pointer by 1", .{});
+                    try validationError(.special_scheme_missing_following_solidus, validation_error_behavior);
+                    state = .special_authority_ignore_slashes;
+                    pointer.dec();
+                }
+            },
+            .special_authority_ignore_slashes => {
+                trace.state(@src(), .special_authority_ignore_slashes);
+                const c = pointer.codepoint() orelse EOF_CODEPOINT;
+                if (c != '/' and c != '\\') {
+                    trace.step(@src(), "If c is neither U+002F (/) nor U+005C (\\), then set state to authority state and decrease pointer by 1", .{ .c = c });
+                    state = .authority;
+                    pointer.dec();
+                } else {
+                    trace.step(@src(), "Otherwise, special-scheme-missing-following-solidus validation error", .{});
+                    try validationError(.special_scheme_missing_following_solidus, validation_error_behavior);
+                }
+            },
             inline else => |s| @panic("TODO: '" ++ @tagName(s) ++ "' state"),
         }
 
